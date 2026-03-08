@@ -1,9 +1,9 @@
 name: basic_foss
 description: "An unofficial FOSS, privacy-preserving client for Basic-Fit."
 
-publish_to: 'none'
+publish_to: "none"
 
-version: 1.0.1
+version: 1.0.3
 
 environment:
   sdk: ^3.9.2

@@ -1,13 +1,12 @@
 import 'dart:convert';
 
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:crypto/crypto.dart';
 
 import 'dart:math';
 
 import 'oauth.dart' as oauth;
 
-Future<QrImageView?> generateBasicQrCode() async {
+Future<String?> generateBasicQrData() async {
   String? deviceId = await oauth.storage.read(key: "device_id");
   String? cardNumber = await oauth.storage.read(key: "card_number");
 
@@ -27,11 +26,7 @@ Future<QrImageView?> generateBasicQrCode() async {
       .substring(56);
   String qrData = 'GM2:$cardNumber:$guid:$unixTimestamp:$hash';
 
-  return QrImageView(
-    data: qrData,
-    version: QrVersions.auto,
-    errorCorrectionLevel: QrErrorCorrectLevel.M,
-  );
+  return qrData;
 }
 
 String Guid() {

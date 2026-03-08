@@ -207,8 +207,18 @@ Future<bool> isTokenExpired({int bufferSeconds = 60}) async {
 
   final payload = decodeJwtPayload(accessToken);
   if (payload == null || payload['exp'] == null) return true;
+  final expValue = payload['exp'];
+  int exp;
+  if (expValue is int) {
+    exp = expValue;
+  } else if (expValue is double) {
+    exp = expValue.toInt();
+  } else if (expValue is String) {
+    exp = int.tryParse(expValue) ?? 0;
+  } else {
+    return true;
+  }
 
-  final exp = payload['exp'] as int;
   final expiryTime = DateTime.fromMillisecondsSinceEpoch(exp * 1000);
   final now = DateTime.now().add(Duration(seconds: bufferSeconds));
 
@@ -216,7 +226,7 @@ Future<bool> isTokenExpired({int bufferSeconds = 60}) async {
 }
 
 /// Refreshes the access token using the stored refresh token
-Future<bool> refreshAccessToken() async {
+Future<bool> refreshAccessToken({bool openFriendsOnFailure = false}) async {
   if (_refreshCompleter != null) {
     return _refreshCompleter!.future;
   }
@@ -259,29 +269,40 @@ Future<bool> refreshAccessToken() async {
     } else {
       print('Failed to refresh token: $responseBody');
 
-      // refresh token probably expired or revoked
-      login();
+      // refresh token probably expired or revoked — trigger re-login
+      await login();
 
       result = false;
     }
-  } catch (e) {
+    } catch (e) {
     print('Error refreshing token: $e');
 
-    // eh, this only gets used for friends page, so,
-    if (!await launchUrl(
-      Uri.parse('https://my.basic-fit.com/friends?app=true'),
-      mode: LaunchMode.inAppBrowserView,
-    )) {
-      result = false;
-      if (!_refreshCompleter!.isCompleted) _refreshCompleter!.complete(result);
-      _refreshCompleter = null;
-      throw Exception('Could not open browser.');
-    }
+    if (openFriendsOnFailure) {
+      bool opened = false;
+      try {
+        opened = await launchUrl(
+          Uri.parse('https://my.basic-fit.com/friends?app=true'),
+          mode: LaunchMode.inAppBrowserView,
+        );
+      } catch (_) {
+        opened = false;
+      }
 
-    result = false;
+      if (!opened) {
+        result = false;
+        // Let the finally block complete the completer and clean up
+        throw Exception('Could not open browser.');
+      }
+
+      result = false;
+    } else {
+      result = false;
+    }
   } finally {
     httpClient.close();
-    if (!_refreshCompleter!.isCompleted) _refreshCompleter!.complete(result);
+    if (_refreshCompleter != null && !_refreshCompleter!.isCompleted) {
+      _refreshCompleter!.complete(result);
+    }
     _refreshCompleter = null;
   }
 
@@ -289,9 +310,9 @@ Future<bool> refreshAccessToken() async {
 }
 
 /// Ensures a valid access token is available, refreshing if necessary
-Future<String?> getValidAccessToken() async {
+Future<String?> getValidAccessToken({bool openFriendsOnFailure = false}) async {
   if (await isTokenExpired()) {
-    bool refreshed = await refreshAccessToken();
+    bool refreshed = await refreshAccessToken(openFriendsOnFailure: openFriendsOnFailure);
     if (!refreshed) return null;
   }
   return await storage.read(key: "access_token");
@@ -299,7 +320,7 @@ Future<String?> getValidAccessToken() async {
 
 /// Opens the friends page in an in-app browser
 Future<void> openFriendsPage() async {
-  String? accessToken = await getValidAccessToken();
+  String? accessToken = await getValidAccessToken(openFriendsOnFailure: true);
   if (accessToken == null) {
     throw Exception('No valid access token available');
   }
@@ -316,6 +337,8 @@ Future<void> openFriendsPage() async {
 
 /// Logs out by clearing all stored credentials
 Future<void> logout() async {
+  _lastProcessedCode = null;
+
   await storage.delete(key: "access_token");
   await storage.delete(key: "refresh_token");
   await storage.delete(key: "device_id");

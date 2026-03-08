@@ -63,51 +63,140 @@ class App extends StatelessWidget {
   }
 }
 
-class AppState extends ChangeNotifier {
+class AppState extends ChangeNotifier with WidgetsBindingObserver {
   var loggedIn = false;
-  QrImageView? qr;
+  String? qrData;
   LoginStatus loginStatus = LoginStatus.idle;
 
   var _initialized = false;
 
+  Timer? _pollTimer;
+  int _pollGeneration = 0;
+  bool _isForeground = true;
+
   AppState() {
     globalAppState = this;
+    // Observe app lifecycle to pause/resume background polling
+    WidgetsBinding.instance.addObserver(this);
+    // Default to true: the app starts in the foreground, and no lifecycle
+    // change event fires on initial launch (lifecycleState is null).
+    _isForeground = WidgetsBinding.instance.lifecycleState != AppLifecycleState.paused
+        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.detached
+        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.inactive
+        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.hidden;
     if (!appStateReady.isCompleted) {
       appStateReady.complete();
     }
+    print('AppState: created, initial foreground=$_isForeground');
   }
 
   Future<void> init({bool timed = false}) async {
+    print('AppState.init called (timed=$timed)');
     if (_initialized && !timed) return;
-    _initialized = true;
 
+    var success = false;
     try {
       var isLoggedIn = await oauth.isLoggedIn();
+      if (!_isForeground) return; // app went to background during await
       if (isLoggedIn) {
-        qr = await qrutil.generateBasicQrCode();
+        qrData = await qrutil.generateBasicQrData();
+        if (!_isForeground) return; // app went to background during await
       }
       loggedIn = isLoggedIn;
 
       notifyListeners();
 
-      if (!timed) {
-        Timer.periodic(const Duration(seconds: 5), (_) async {
-          await init(timed: true);
-        });
-      }
+      success = true;
     } catch (e) {
       print('Error in init: $e');
     }
+
+    if (!timed) {
+      if (success) {
+        _initialized = true;
+      }
+      _startPollTimer();
+    }
+  }
+
+  void _startPollTimer() {
+    _stopPollTimer();
+    if (!_isForeground) {
+      print('PollTimer: not starting because app is not foreground');
+      return;
+    }
+    // _stopPollTimer() already bumped the generation, so capture the
+    // current value — any older in-flight callback is already invalid.
+    final int gen = _pollGeneration;
+    const interval = Duration(seconds: 5);
+    void scheduleNext() {
+      if (gen != _pollGeneration) {
+        print('PollTimer: stale generation ($gen != $_pollGeneration), not rescheduling');
+        return;
+      }
+      if (!_isForeground) {
+        print('PollTimer: not scheduling next because app not foreground');
+        return;
+      }
+      print('PollTimer: scheduling one-shot (5s) [gen=$gen]');
+      _pollTimer = Timer(interval, () async {
+        if (gen != _pollGeneration || !_isForeground) {
+          print('PollTimer: fired but stale/backgrounded, skipping [gen=$gen, current=$_pollGeneration, fg=$_isForeground]');
+          return;
+        }
+        print('PollTimer: fired — calling init(timed: true) [gen=$gen]');
+        await init(timed: true);
+        scheduleNext();
+      });
+    }
+
+    scheduleNext();
+  }
+
+  void _stopPollTimer() {
+    if (_pollTimer != null) {
+      print('PollTimer: stopping');
+    }
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    // Invalidate any in-flight async callbacks from the previous chain
+    _pollGeneration++;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    print('Lifecycle: didChangeAppLifecycleState -> $state');
+    if (state == AppLifecycleState.resumed) {
+      _isForeground = true;
+      Future.microtask(() => refreshQrCode());
+      _startPollTimer();
+    } else {
+      _isForeground = false;
+      _stopPollTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    print('AppState: dispose');
+    WidgetsBinding.instance.removeObserver(this);
+    _stopPollTimer();
+    super.dispose();
   }
 
   Future<void> refreshQrCode() async {
+    print('AppState.refreshQrCode called');
+    if (!_isForeground) return;
     try {
       var isLoggedIn = await oauth.isLoggedIn();
+      if (!_isForeground) return; // app went to background during await
       if (isLoggedIn) {
-        qr = await qrutil.generateBasicQrCode();
+        qrData = await qrutil.generateBasicQrData();
+        if (!_isForeground) return; // app went to background during await
+        print('refreshQrCode: updated qrData length=${qrData?.length ?? 0}');
         loginStatus = LoginStatus.idle;
       } else {
-        qr = null;
+        qrData = null;
       }
       loggedIn = isLoggedIn;
       notifyListeners();
@@ -156,8 +245,14 @@ class _MainState extends State<Main> {
     return Scaffold(
       body: Center(
         child: appState.loggedIn
-            ? (appState.qr ?? const Text('Generating QR code...'))
-            : Text(getStatusText()),
+          ? (appState.qrData != null
+            ? QrImageView(
+              data: appState.qrData!,
+              version: QrVersions.auto,
+              errorCorrectionLevel: QrErrorCorrectLevel.M,
+              )
+            : const Text('Generating QR code...'))
+          : Text(getStatusText()),
       ),
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
