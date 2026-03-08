@@ -2,6 +2,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:math';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:io';
 import 'main.dart' show globalAppState, LoginStatus;
@@ -16,6 +17,7 @@ String clientId = 'q6KqjlQINmjOC86rqt9JdU_i41nhD_Z4DwygpBxGiIs';
 final storage = FlutterSecureStorage();
 
 String? _lastProcessedCode;
+Completer<bool>? _refreshCompleter;
 
 String generateCodeVerifier([int length = 128]) {
   const charset =
@@ -215,8 +217,19 @@ Future<bool> isTokenExpired({int bufferSeconds = 60}) async {
 
 /// Refreshes the access token using the stored refresh token
 Future<bool> refreshAccessToken() async {
+  if (_refreshCompleter != null) {
+    return _refreshCompleter!.future;
+  }
+
+  _refreshCompleter = Completer<bool>();
+  bool result = false;
+
   String? refreshToken = await storage.read(key: "refresh_token");
-  if (refreshToken == null) return false;
+  if (refreshToken == null) {
+    _refreshCompleter!.complete(false);
+    _refreshCompleter = null;
+    return false;
+  }
 
   HttpClient httpClient = HttpClient();
   try {
@@ -242,17 +255,37 @@ Future<bool> refreshAccessToken() async {
       await storage.write(key: "refresh_token", value: newRefreshToken);
 
       print('Token refreshed successfully');
-      return true;
+      result = true;
     } else {
       print('Failed to refresh token: $responseBody');
-      return false;
+
+      // refresh token probably expired or revoked
+      login();
+
+      result = false;
     }
   } catch (e) {
     print('Error refreshing token: $e');
-    return false;
+
+    // eh, this only gets used for friends page, so,
+    if (!await launchUrl(
+      Uri.parse('https://my.basic-fit.com/friends?app=true'),
+      mode: LaunchMode.inAppBrowserView,
+    )) {
+      result = false;
+      if (!_refreshCompleter!.isCompleted) _refreshCompleter!.complete(result);
+      _refreshCompleter = null;
+      throw Exception('Could not open browser.');
+    }
+
+    result = false;
   } finally {
     httpClient.close();
+    if (!_refreshCompleter!.isCompleted) _refreshCompleter!.complete(result);
+    _refreshCompleter = null;
   }
+
+  return result;
 }
 
 /// Ensures a valid access token is available, refreshing if necessary
