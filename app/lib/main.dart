@@ -80,10 +80,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     // Default to true: the app starts in the foreground, and no lifecycle
     // change event fires on initial launch (lifecycleState is null).
+    // Treat `inactive` as still effectively foreground for our polling
+    // purposes (visible but out-of-focus should keep refreshing).
     _isForeground = WidgetsBinding.instance.lifecycleState != AppLifecycleState.paused
-        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.detached
-        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.inactive
-        && WidgetsBinding.instance.lifecycleState != AppLifecycleState.hidden;
+      && WidgetsBinding.instance.lifecycleState != AppLifecycleState.detached
+      && WidgetsBinding.instance.lifecycleState != AppLifecycleState.hidden;
     if (!appStateReady.isCompleted) {
       appStateReady.complete();
     }
@@ -170,9 +171,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _isForeground = true;
       Future.microtask(() => refreshQrCode());
       _startPollTimer();
-    } else {
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.detached || state == AppLifecycleState.hidden) {
       _isForeground = false;
       _stopPollTimer();
+    } else {
+      print('Lifecycle: transient state (kept foreground=$_isForeground)');
     }
   }
 
