@@ -120,7 +120,7 @@ Future<void> _performTokenExchange(String code, String codeVerifier) async {
       // print('Access Token: $accessToken');
       // print('Refresh Token: $refreshToken');
 
-      await _fetchMemberInfo(httpClient, accessToken);
+      if (!await isLoggedIn()) await _fetchMemberInfo(httpClient, accessToken);
     } else {
       globalAppState?.setLoginStatus(LoginStatus.failed);
       throw Exception('Failed to get tokens: $responseBody');
