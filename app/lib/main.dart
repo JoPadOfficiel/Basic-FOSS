@@ -233,6 +233,9 @@ class _MainState extends State<Main> {
   @override
   Widget build(BuildContext context) {
     var appState = context.watch<AppState>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final qrForeground = isDark ? Colors.white : Colors.black;
+    final qrBackground = isDark ? Colors.black : Colors.white;
 
     String getStatusText() {
       switch (appState.loginStatus) {
@@ -253,6 +256,15 @@ class _MainState extends State<Main> {
               data: appState.qrData!,
               version: QrVersions.auto,
               errorCorrectionLevel: QrErrorCorrectLevel.M,
+              backgroundColor: qrBackground,
+              dataModuleStyle: QrDataModuleStyle(
+                color: qrForeground,
+                dataModuleShape: QrDataModuleShape.square,
+              ),
+              eyeStyle: QrEyeStyle(
+                color: qrForeground,
+                eyeShape: QrEyeShape.square,
+              ),
               )
             : const Text('Generating QR code...'))
           : Text(getStatusText()),
